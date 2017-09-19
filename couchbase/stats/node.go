@@ -5,17 +5,19 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/Zumata/exporttools"
+	"github.com/dshmelev/couchbase_exporter/exporttools"
 )
 
 type NodeCollector struct {
-	nodeURL string
+	nodeURL  string
+	nodeName string
 }
 
-func NewNodeCollector(nodeURL string) *NodeCollector {
-	return &NodeCollector{nodeURL}
+func NewNodeCollector(nodeURL string, nodeName string) *NodeCollector {
+	return &NodeCollector{nodeURL, nodeName}
 }
 
 func (s *NodeCollector) Collect() ([]*exporttools.Metric, error) {
@@ -24,7 +26,7 @@ func (s *NodeCollector) Collect() ([]*exporttools.Metric, error) {
 	if err != nil {
 		return make([]*exporttools.Metric, 0), err
 	}
-	return formatNodeStats(s.nodeURL, stat), nil
+	return formatNodeStats(s.nodeURL, s.nodeName, stat), nil
 }
 
 type NodeStat struct {
@@ -33,41 +35,53 @@ type NodeStat struct {
 }
 
 type Node struct {
+	Uptime           int64            `json:"uptime,string,omitempty"`
+	Status           string           `json:"status"`
 	Hostname         string           `json:"hostname"`
 	InterestingStats InterestingStats `json:"interestingStats"`
+	SystemStats      SystemStats      `json:"SystemStats"`
+	StorageTotals    StorageTotals    `json:"StorageTotals"`
+}
+
+type SystemStats struct {
+	CpuUtilizationRate float64 `json:"cpu_utilization_rate,omitempty"`
+	SwapTotal          int64   `json:"swap_total"`
+	SwapUsed           int64   `json:"swap_used"`
+	MemTotal           int64   `json:"mem_total"`
+	MemFree            int64   `json:"mem_free"`
 }
 
 type InterestingStats struct {
-	CmdGet                   int64 `json:"cmd_get"`
-	CouchDocsActualDiskSize  int64 `json:"couch_docs_actual_disk_size"`
-	CouchDocsDataSize        int64 `json:"couch_docs_data_size"`
-	CouchViewsActualDiskSize int64 `json:"couch_views_actual_disk_size"`
-	CouchViewsDataSize       int64 `json:"couch_views_data_size"`
-	CurrItems                int64 `json:"curr_items"`
-	CurrItemsTot             int64 `json:"curr_items_tot"`
-	EpBgFetched              int64 `json:"ep_bg_fetched"`
-	GetHits                  int64 `json:"get_hits"`
-	MemUsed                  int64 `json:"mem_used"`
-	Ops                      int64 `json:"ops"`
-	VbReplicaCurrItems       int64 `json:"vb_replica_curr_items"`
+	CmdGet                   float64 `json:"cmd_get"`
+	CouchDocsActualDiskSize  int64   `json:"couch_docs_actual_disk_size"`
+	CouchDocsDataSize        int64   `json:"couch_docs_data_size"`
+	CouchViewsActualDiskSize int64   `json:"couch_views_actual_disk_size"`
+	CouchViewsDataSize       int64   `json:"couch_views_data_size"`
+	CurrItems                int64   `json:"curr_items"`
+	CurrItemsTot             int64   `json:"curr_items_tot"`
+	EpBgFetched              int64   `json:"ep_bg_fetched"`
+	GetHits                  float64 `json:"get_hits"`
+	MemUsed                  int64   `json:"mem_used"`
+	Ops                      float64 `json:"ops"`
+	VbReplicaCurrItems       int64   `json:"vb_replica_curr_items"`
 }
 
 type StorageTotals struct {
 	Hdd struct {
-		// Free       int64 `json:"free"`
 		// QuotaTotal int64 `json:"quotaTotal"`
-		// Total      int64 `json:"total"`
-		Used int64 `json:"used"`
-		// UsedByData int64 `json:"usedByData"`
+		Total      int64 `json:"total"`
+		Free       int64 `json:"free"`
+		Used       int64 `json:"used"`
+		UsedByData int64 `json:"usedByData"`
 	} `json:"hdd"`
 	RAM struct {
 		// QuotaTotal        int64 `json:"quotaTotal"`
 		// QuotaTotalPerNode int64 `json:"quotaTotalPerNode"`
 		// QuotaUsed         int64 `json:"quotaUsed"`
 		// QuotaUsedPerNode  int64 `json:"quotaUsedPerNode"`
-		// Total             int64 `json:"total"`
-		Used int64 `json:"used"`
-		// UsedByData        int64 `json:"usedByData"`
+		Total      int64 `json:"total"`
+		Used       int64 `json:"used"`
+		UsedByData int64 `json:"usedByData"`
 	} `json:"ram"`
 }
 
@@ -101,10 +115,22 @@ func collectNodeStats(nodeURL string, s *NodeStat) error {
 
 }
 
-func formatNodeStats(nodeURL string, s *NodeStat) []*exporttools.Metric {
+func formatNodeStats(nodeURL string, nodeName string, s *NodeStat) []*exporttools.Metric {
 
 	// add storage totals
 	storageMetrics := []*exporttools.Metric{
+		{
+			Name:        "storage_hdd_total",
+			Type:        exporttools.Gauge,
+			Value:       s.StorageTotals.Hdd.Total,
+			Description: "storagetotals_hdd_total",
+		},
+		{
+			Name:        "storage_hdd_free",
+			Type:        exporttools.Gauge,
+			Value:       s.StorageTotals.Hdd.Free,
+			Description: "storagetotals_hdd_free",
+		},
 		{
 			Name:        "storage_hdd_used",
 			Type:        exporttools.Gauge,
@@ -112,20 +138,47 @@ func formatNodeStats(nodeURL string, s *NodeStat) []*exporttools.Metric {
 			Description: "storage_hdd_used",
 		},
 		{
+			Name:        "storage_hdd_usedbydata",
+			Type:        exporttools.Gauge,
+			Value:       s.StorageTotals.Hdd.UsedByData,
+			Description: "storagetotals_hdd_usedbydata",
+		},
+		{
+			Name:        "storage_ram_total",
+			Type:        exporttools.Gauge,
+			Value:       s.StorageTotals.RAM.Total,
+			Description: "storage_ram_total",
+		},
+		{
 			Name:        "storage_ram_used",
 			Type:        exporttools.Gauge,
 			Value:       s.StorageTotals.RAM.Used,
 			Description: "storage_ram_used",
 		},
+		{
+			Name:        "storage_ram_usedbydata",
+			Type:        exporttools.Gauge,
+			Value:       s.StorageTotals.RAM.UsedByData,
+			Description: "storage_ram_usedbydata",
+		},
 	}
 
 	nodeMetrics := []*exporttools.Metric{}
 	for nodeIdx := range s.Nodes {
+		if !strings.HasPrefix(s.Nodes[nodeIdx].Hostname, nodeName) {
+			continue
+		}
+		var nodeStatus int64
+		if s.Nodes[nodeIdx].Status == "healthy" {
+			nodeStatus = 1
+		} else {
+			nodeStatus = 0
+		}
 		currentNodeMetrics := []*exporttools.Metric{
 			{
 				Name:        "cmd_get",
 				Type:        exporttools.Gauge,
-				Value:       s.Nodes[nodeIdx].InterestingStats.CmdGet,
+				Value:       int64(s.Nodes[nodeIdx].InterestingStats.CmdGet),
 				Description: "cmd_get",
 			},
 			{
@@ -173,7 +226,7 @@ func formatNodeStats(nodeURL string, s *NodeStat) []*exporttools.Metric {
 			{
 				Name:        "get_hits",
 				Type:        exporttools.Gauge,
-				Value:       s.Nodes[nodeIdx].InterestingStats.GetHits,
+				Value:       int64(s.Nodes[nodeIdx].InterestingStats.GetHits),
 				Description: "get_hits",
 			},
 			{
@@ -185,7 +238,7 @@ func formatNodeStats(nodeURL string, s *NodeStat) []*exporttools.Metric {
 			{
 				Name:        "ops",
 				Type:        exporttools.Gauge,
-				Value:       s.Nodes[nodeIdx].InterestingStats.Ops,
+				Value:       int64(s.Nodes[nodeIdx].InterestingStats.Ops),
 				Description: "ops",
 			},
 			{
@@ -193,6 +246,48 @@ func formatNodeStats(nodeURL string, s *NodeStat) []*exporttools.Metric {
 				Type:        exporttools.Gauge,
 				Value:       s.Nodes[nodeIdx].InterestingStats.VbReplicaCurrItems,
 				Description: "vb_replica_curr_items",
+			},
+			{
+				Name:        "cpu_utilization_rate",
+				Type:        exporttools.Gauge,
+				Value:       int64(s.Nodes[nodeIdx].SystemStats.CpuUtilizationRate),
+				Description: "cpu_utilization_rate",
+			},
+			{
+				Name:        "swap_total",
+				Type:        exporttools.Gauge,
+				Value:       s.Nodes[nodeIdx].SystemStats.SwapTotal,
+				Description: "swap_total",
+			},
+			{
+				Name:        "swap_used",
+				Type:        exporttools.Gauge,
+				Value:       s.Nodes[nodeIdx].SystemStats.SwapUsed,
+				Description: "swap_used",
+			},
+			{
+				Name:        "mem_total",
+				Type:        exporttools.Gauge,
+				Value:       s.Nodes[nodeIdx].SystemStats.MemTotal,
+				Description: "mem_total",
+			},
+			{
+				Name:        "mem_free",
+				Type:        exporttools.Gauge,
+				Value:       s.Nodes[nodeIdx].SystemStats.MemFree,
+				Description: "mem_free",
+			},
+			{
+				Name:        "uptime",
+				Type:        exporttools.Gauge,
+				Value:       s.Nodes[nodeIdx].Uptime,
+				Description: "uptime",
+			},
+			{
+				Name:        "status",
+				Type:        exporttools.Gauge,
+				Value:       nodeStatus,
+				Description: "status",
 			},
 		}
 		for cnmIdx := range currentNodeMetrics {

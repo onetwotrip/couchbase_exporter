@@ -1,8 +1,8 @@
 package couchbase
 
 import (
-	"github.com/Zumata/couchbase_exporter/couchbase/stats"
-	"github.com/Zumata/exporttools"
+	"github.com/dshmelev/couchbase_exporter/couchbase/stats"
+	"github.com/dshmelev/couchbase_exporter/exporttools"
 	_ "github.com/lib/pq"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,19 +10,21 @@ import (
 
 type couchbaseExporter struct {
 	*exporttools.BaseExporter
-	nodeURL string
+	nodeURL  string
+	nodeName string
 }
 
-func NewExporter(nodeURL string) *couchbaseExporter {
+func NewExporter(nodeURL string, nodeName string) *couchbaseExporter {
 	e := &couchbaseExporter{
 		BaseExporter: exporttools.NewBaseExporter("couchbase"),
 		nodeURL:      nodeURL,
+		nodeName:     nodeName,
 	}
 	return e
 }
 
 func (e *couchbaseExporter) Setup() error {
-	e.AddGroup(stats.NewNodeCollector(e.nodeURL))
+	e.AddGroup(stats.NewNodeCollector(e.nodeURL, e.nodeName))
 	return nil
 }
 
